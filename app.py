@@ -116,8 +116,93 @@ These metrics are four independent variables that directly measure "reserve supp
     "l2_sofr": { "English": "SOFR - IORB Spread", "日本語": "SOFR - IORB スプレッド" },
     "l2_tnx": { "English": "TNX 5MA Deviation", "日本語": "10年債金利 5MA乖離" },
     "l2_real": { "English": "Real Yield (10Y TIPS)", "日本語": "実質金利 (10年TIPS)" },
-    "no_data": { "English": "No Data", "日本語": "データなし" }
+    "l2_real": { "English": "Real Yield (10Y TIPS)", "日本語": "実質金利 (10年TIPS)" },
+    "no_data": { "English": "No Data", "日本語": "データなし" },
+    
+    # --- Quarterly Table Translations ---
+    "quarter": { "日本語": "四半期", "English": "Quarter" },
+    "net_income": { "日本語": "純利益（NI）", "English": "Net Income" },
+    "ocf": { "日本語": "営業キャッシュフロー（OCF）", "English": "Operating Cash Flow" },
+    "capex": { "日本語": "設備投資（CapEx）", "English": "Capital Expenditure" },
+    "fcf": { "日本語": "フリーキャッシュフロー（FCF）", "English": "Free Cash Flow" },
+    "capex_ni": { "日本語": "CapEx / 純利益", "English": "CapEx / Net Income" },
+    "capex_ocf": { "日本語": "CapEx / OCF", "English": "CapEx / OCF" },
+    "psr": { "日本語": "物理的ソルベンシー比率（PSR）", "English": "Physical Solvency Ratio (PSR)" },
+    "capex_status": { "日本語": "CapEx 状態", "English": "CapEx Status" }
 }
+
+COLUMN_LABEL_MAP = {
+    "Quarter": "quarter",
+    "NetIncome": "net_income",
+    "OperatingCashFlow": "ocf",
+    "CapitalExpenditure": "capex",
+    "FCF": "fcf",
+    "CapEx_to_NI": "capex_ni",
+    "CapEx_to_OCF": "capex_ocf",
+    "PSR": "psr",
+    "CapEx_Status": "capex_status"
+}
+
+CAPEX_STATUS_LABELS = {
+    "HEALTHY": {
+        "日本語": "健全（回収設計あり）",
+        "English": "Healthy (Self-Recovering)"
+    },
+    "BOUNDARY": {
+        "日本語": "境界（耐久力低下）",
+        "English": "Boundary (Durability Erosion)"
+    },
+    "BLACK_HOLE": {
+        "日本語": "ブラックホール（資金吸収）",
+        "English": "Black Hole (Liquidity Sink)"
+    }
+}
+
+CAPEX_HEALTH_LABELS = {
+    "HEALTHY": {
+        "日本語": "健全",
+        "English": "Healthy"
+    },
+    "BOUNDARY": {
+        "日本語": "境界（デッドクロス）",
+        "English": "Boundary (Dead Cross)"
+    },
+    "BLACK_HOLE": {
+        "日本語": "物理的ブラックホール",
+        "English": "Physical Black Hole"
+    }
+}
+
+CAPEX_HEALTH_DESC = {
+    "HEALTHY": {
+        "日本語": "CapExは利益および営業キャッシュフローで自律的に賄われており、健全な成長投資です。",
+        "English": "CapEx is fully covered by earnings and operating cash flow, indicating healthy growth investment."
+    },
+    "BOUNDARY": {
+        "日本語": "CapExが純利益または営業キャッシュフローを上回り始めており、デッドクロスの初期段階にあります。",
+        "English": "CapEx has begun to exceed net income or operating cash flow, indicating an early-stage dead cross."
+    },
+    "BLACK_HOLE": {
+        "日本語": "CapExと物理コストがキャッシュ創出能力を超過し、流動性を吸収する物理的ブラックホールに入りつつあります。",
+        "English": "CapEx and physical costs exceed cash generation capacity, indicating entry into a physical liquidity black hole."
+    }
+}
+
+def t_capex_health(key: str, lang: str) -> str:
+    return CAPEX_HEALTH_LABELS.get(key, {}).get(lang, key)
+
+def t_capex_desc(key: str, lang: str) -> str:
+    return CAPEX_HEALTH_DESC.get(key, {}).get(lang, "")
+
+def localize_quarterly_df(df, lang):
+    renamed_cols = {
+        col: TRANSLATIONS[COLUMN_LABEL_MAP[col]][lang]
+        for col in df.columns
+        if col in COLUMN_LABEL_MAP
+    }
+    return df.rename(columns=renamed_cols)
+
+
 
 REPORTS = {
     "HEALTHY": {
@@ -217,11 +302,7 @@ st.markdown("""
             padding: 30px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.05);
             margin-bottom: 25px;
-            border-left: 8px solid #ddd;
         }
-        .panel-healthy { border-left-color: #28A745; }
-        .panel-warning { border-left-color: #FFC107; }
-        .panel-critical { border-left-color: #DC3545; }
         
         .judgment-title {
             font-size: 1.8rem;
@@ -357,6 +438,105 @@ lang = st.session_state.language
 # --- Google Sheet URLs ---
 CONFIG_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTPFDp3yDMtcAChS7vdE2yUlv-tvCw5cPDlI5-k8dm-ZUYCMiQ6_ydWHZui7G92WxEbkaUFvap2lFa6/pub?output=csv"
 LIQUIDITY_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRp0T72A5SmCOEuxj-guQ5ErHi7PWWtS05dAJdQnwx2ccEjdBRLHXIrcwfDYnnF9iguA7oMZLyGNpAr/pub?output=csv"
+
+@st.cache_data(ttl=3600)
+def build_capex_audit_from_yf(tickers):
+    """
+    yfinance の quarterly_income_stmt / quarterly_cashflow から
+    直近四半期の Net Income / OCF / CapEx を自動取得して
+    CapEx監査用の DataFrame を返す。
+    """
+    rows = []
+    for t in tickers:
+        try:
+            tk = yf.Ticker(t)
+            inc_q = tk.quarterly_income_stmt
+            cf_q  = tk.quarterly_cashflow
+
+            if inc_q is None or cf_q is None or inc_q.empty or cf_q.empty:
+                continue
+
+            # 最新四半期（列0が一番新しい前提）
+            period = inc_q.columns[0]
+
+            # --- Net Income ---
+            ni_candidates = [
+                "Net Income",
+                "NetIncome",
+                "Net Income Common Stockholders",
+            ]
+            net_income = None
+            for idx_name in ni_candidates:
+                if idx_name in inc_q.index:
+                    net_income = inc_q.loc[idx_name, period]
+                    break
+
+            # --- Operating Cash Flow ---
+            ocf_candidates = [
+                "Total Cash From Operating Activities",
+                "Cash From Operating Activities",
+                "Operating Cash Flow",
+            ]
+            ocf = None
+            for idx_name in ocf_candidates:
+                if idx_name in cf_q.index:
+                    ocf = cf_q.loc[idx_name, period]
+                    break
+
+            # --- CapEx ---
+            capex_candidates = [
+                "Capital Expenditure",
+                "Capital Expenditures",
+                "Investment In Property, Plant, and Equipment",
+            ]
+            capex = None
+            for idx_name in capex_candidates:
+                if idx_name in cf_q.index:
+                    capex = cf_q.loc[idx_name, period]
+                    break
+
+            if net_income is None and ocf is None and capex is None:
+                continue
+
+            rows.append({
+                "Ticker": t,
+                "Period": str(period).split()[0], # YYYY-MM-DD format
+                "NI_Q": float(net_income) if net_income is not None else np.nan,
+                "OCF_Q": float(ocf) if ocf is not None else np.nan,
+                "CapEx_Q": float(capex) if capex is not None else np.nan,
+            })
+
+        except Exception as e:
+            # st.warning(f"[CapEx audit] Error fetching {t}: {e}")
+            continue
+
+    if not rows:
+        return pd.DataFrame(columns=["Ticker", "Period", "NI_Q", "OCF_Q", "CapEx_Q"])
+
+    return pd.DataFrame(rows)
+
+
+def classify_capex_health(row):
+    psr = row.get("PSR", np.nan)
+    c_ni = row.get("CapEx_to_NI", np.nan)
+    c_ocf = row.get("CapEx_to_OCF", np.nan)
+
+    # 物理的なブラックホール：
+    # PSR < 1.0 かつ CapEx が利益 or OCF を食い潰している
+    if (not np.isnan(psr) and psr < 1.0) and (
+        (not np.isnan(c_ni) and c_ni > 1.0) or
+        (not np.isnan(c_ocf) and c_ocf > 1.0)
+    ):
+        return "BLACK_HOLE"
+
+    # Dead Cross が出ているが PSR > 1.0 → 境界域
+    if ((not np.isnan(c_ni) and c_ni > 1.0) or
+        (not np.isnan(c_ocf) and c_ocf > 1.0)):
+        return "BOUNDARY"
+
+    # それ以外はとりあえず健全
+    return "HEALTHY"
+
 
 @st.cache_data(ttl=600)
 def load_config():
@@ -595,33 +775,8 @@ def get_config_val(key, default=0):
         return default
 
 # --- Logic ---
-SPX_FRICTION = get_config_val("SPX_FRICTION", 7020)
-SPX_DEFENSE = get_config_val("SPX_DEFENSE", 6880)
-FANG_FRICTION = get_config_val("FANG_FRICTION", 12450)
-FANG_FLIP = get_config_val("FANG_FLIP", 11820) 
+# Global Logic for Layout Control removed as requested.
 
-val_spx = market_data.get('SPX')
-val_nyfang = market_data.get('NYFANG')
-val_sofr = market_data.get('SOFR')
-val_iorb = market_data.get('IORB')
-val_spread = val_sofr - val_iorb
-logic_spread_threshold = 0.05 
-
-is_critical_price = (val_spx <= SPX_DEFENSE) or (val_nyfang <= FANG_FLIP)
-is_warning_price = (val_spx <= SPX_FRICTION) or (val_nyfang <= FANG_FRICTION)
-is_liquidity_stress = val_spread >= logic_spread_threshold
-
-final_status = "HEALTHY" # Default for metrics strip, but main panel uses MAIN_EXPLANATION
-# --- 1. Judgment Panel (Main Statement) ---
-# Legacy Logic Suppressed
-# if is_critical_price and is_liquidity_stress:
-#     final_status = "CRITICAL"
-# elif is_warning_price or is_liquidity_stress:
-#     final_status = "WARNING"
-# else:
-#     final_status = "HEALTHY"
-# current_meta = STATUS_MAP[final_status]
-# current_msg = REPORTS[final_status]["日本語" if lang == "日本語" else "English"]
 
 
 
@@ -630,7 +785,7 @@ STATUS_MAP = {
     "WARNING": {"color": "#FFC107", "icon": "🟡", "class": "panel-warning"},
     "CRITICAL": {"color": "#DC3545", "icon": "🔴", "class": "panel-critical"}
 }
-current_meta = STATUS_MAP[final_status]
+
 
 # --- Layout ---
 
@@ -655,399 +810,462 @@ with c_head_R:
 st.markdown(MAIN_EXPLANATION['日本語' if lang == '日本語' else 'English'])
 
 
-# 1. Judgment Panel (Main Statement)
-st.markdown(f"""
-<div class="judgment-panel {current_meta['class']}">
-    <div class="judgment-title" style="color: {current_meta['color']}">
-        {current_meta['icon']} {REPORTS[final_status][lang].splitlines()[1].strip()}
-    </div>
-    <div style="font-size: 1.05rem; line-height: 1.6; color: #333;">
-""", unsafe_allow_html=True)
-st.markdown(REPORTS[final_status][lang], unsafe_allow_html=True)
-st.markdown("</div></div>", unsafe_allow_html=True)
-
-# 2. Metrics Strip (Relocated Below)
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.markdown(f"""
-    <div class="metric-card" style="text-align:center;">
-        <div class="stat-label">S&P 500</div>
-        <div class="stat-value">{val_spx:,.0f}</div>
-        <div class="stat-sub">{TRANSLATIONS['defense'][lang]}{SPX_DEFENSE:,.0f}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col2:
-    st.markdown(f"""
-    <div class="metric-card" style="text-align:center;">
-        <div class="stat-label">NY FANG+</div>
-        <div class="stat-value">{val_nyfang:,.0f}</div>
-        <div class="stat-sub">{TRANSLATIONS['flip'][lang]}{FANG_FLIP:,.0f}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col3:
-    st.markdown(f"""
-    <div class="metric-card" style="text-align:center;">
-        <div class="stat-label">SOFR</div>
-        <div class="stat-value">{val_sofr:.2f}%</div>
-        <div class="stat-sub">{TRANSLATIONS['target'][lang]} < 5.35%</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col4:
-    spread_bps = (val_sofr - val_iorb) * 100
-    color = "red" if spread_bps >= 5 else "green"
-    d_sofr = market_data.get('SOFR_Date', '-')
-    d_iorb = market_data.get('IORB_Date', '-')
-
-    st.markdown(f"""
-    <div class="metric-card" style="text-align:center;">
-        <div class="stat-label">{TRANSLATIONS['spread_metric_label'][lang]}</div>
-        <div class="stat-value" style="color:{color}">{spread_bps:.1f} bps</div>
-        <div class="stat-sub" style="font-size:0.75rem; line-height:1.2;">
-             SOFR ({d_sofr}): {val_sofr:.2f}%<br>
-             IORB ({d_iorb}): {val_iorb:.2f}%<br>
-             <span style="color:#888;">{TRANSLATIONS['limit'][lang]} +5.0 bps</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# 3. Main Content (Layers Stacked)
-st.divider()
-
-# Layer 1
-st.subheader(TRANSLATIONS['l1_title'][lang])
-st.markdown(TRANSLATIONS['l1_desc'][lang], unsafe_allow_html=True)
-
-# --- Layer 1 Messages ---
-L1_MESSAGES = {
-    "HEALTHY": {
-        "JP": "🟢 <b>健全 (自律的均衡)</b>\n企業のキャッシュ生成能力（$FCF$）がAIインフラ投資（$CapEx$）を十分に凌駕しています。外部の銀行与信に依存することなく投資と株主還元を両立できる「業績の盾」が強固に機能しており、構造的均衡は維持されています。",
-        "EN": "🟢 <b>DURABLE (Autonomous Equilibrium)</b>\nCorporate cash generation ($FCF$) sufficiently exceeds AI infrastructure investment ($CapEx$). The 'Earnings Shield' is functioning robustly, enabling both investment and shareholder returns without reliance on external bank credit. Structural equilibrium remains intact."
-    },
-    "WARNING": {
-        "JP": "🟡 <b>警告 (耐久性の摩擦)</b>\n投資コストの増大によりキャッシュ余力が急速に低下しています。自律的な資金循環の限界点（$1.0$）に接近しており、僅かな収益悪化やコスト増が「銀行融資枠の占有」を引き起こすリスクが高まっています。",
-        "EN": "🟡 <b>STRAINED (Friction in Durability)</b>\nIncreasing investment costs are rapidly depleting cash buffers. The metrics are approaching the threshold of fiscal autonomy ($1.0$). High risk remains that any minor earnings deterioration or cost spike will trigger a 'seizure of bank credit lines.'"
-    },
-    "CRITICAL": {
-        "JP": "🔴 <b>決壊 (自律性の喪失と窒息)</b>\n物理的投資コストがキャッシュ生成能力を突破しました。企業は自律性を失い、不足分を銀行の「未使用融資枠」に依存し始めています。これはシステム全体の準備金を占有し、市場を構造的窒息へ導く物理的な決壊サインです。",
-        "EN": "🔴 <b>BROKEN (Loss of Autonomy & Suffocation)</b>\nPhysical investment costs have breached cash-generating capacity. Firms have lost fiscal autonomy and begun relying on 'Unused Bank Commitments.' This signifies a physical rupture, where systemic reserves are drained, leading the market toward structural suffocation."
-    }
+# Global Judgment Panel and Metrics Strip Removed
+# --- Tab Layout ---
+st.markdown('<div style="margin-bottom: 10px;"></div>', unsafe_allow_html=True)
+tab_titles = {
+    "English": ["APLC-5 Audit", "Liquidity Friction", "Transmission Monitor", "Danger Source", "Survivor Map"],
+    "日本語": ["APLC-5 監査", "流動性摩擦", "伝播モニター", "危険源モニター", "Survivor マップ"]
 }
+tabs = st.tabs(tab_titles[lang])
 
-# --- New Data Source: Physical Metrics ---
-PHYSICAL_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRgul7PbiP2EYy8KiPmMglhd2R-oXTriikeZCZxQHKtrxLgbwJyEiGuprBsdAEDMR_F2te9E2GQRTYb/pub?output=csv"
+with tabs[0]:
+    # Layer 1
+    st.subheader(TRANSLATIONS['l1_title'][lang])
+    st.markdown(TRANSLATIONS['l1_desc'][lang], unsafe_allow_html=True)
 
-@st.cache_data(ttl=3600)
-def load_physical_metrics():
-    try:
-        df = pd.read_csv(PHYSICAL_SHEET_URL)
-        # Rename Japanese columns to internal English keys
-        # 銘柄 (Ticker), 電力総使用量 (Annual TWh), 電力上昇単価 (Δ$/MWh), 予約費用単価 (加重 $/MW-day), ...
-        col_map = {
-            "銘柄 (Ticker)": "Ticker_Raw",
-            "電力総使用量 (Annual TWh)": "TWh",
-            "電力上昇単価 (Δ$/MWh)": "Price_Delta",
-            "予約費用単価 (加重 $/MW-day)": "Res_Fee_Unit"
+    # --- Layer 1 Messages ---
+    L1_MESSAGES = {
+        "HEALTHY": {
+            "JP": "🟢 <b>健全 (自律的均衡)</b>\n企業のキャッシュ生成能力（$FCF$）がAIインフラ投資（$CapEx$）を十分に凌駕しています。外部の銀行与信に依存することなく投資と株主還元を両立できる「業績の盾」が強固に機能しており、構造的均衡は維持されています。",
+            "EN": "🟢 <b>DURABLE (Autonomous Equilibrium)</b>\nCorporate cash generation ($FCF$) sufficiently exceeds AI infrastructure investment ($CapEx$). The 'Earnings Shield' is functioning robustly, enabling both investment and shareholder returns without reliance on external bank credit. Structural equilibrium remains intact."
+        },
+        "WARNING": {
+            "JP": "🟡 <b>警告 (耐久性の摩擦)</b>\n投資コストの増大によりキャッシュ余力が急速に低下しています。自律的な資金循環の限界点（$1.0$）に接近しており、僅かな収益悪化やコスト増が「銀行融資枠の占有」を引き起こすリスクが高まっています。",
+            "EN": "🟡 <b>STRAINED (Friction in Durability)</b>\nIncreasing investment costs are rapidly depleting cash buffers. The metrics are approaching the threshold of fiscal autonomy ($1.0$). High risk remains that any minor earnings deterioration or cost spike will trigger a 'seizure of bank credit lines.'"
+        },
+        "CRITICAL": {
+            "JP": "🔴 <b>決壊 (自律性の喪失と窒息)</b>\n物理的投資コストがキャッシュ生成能力を突破しました。企業は自律性を失い、不足分を銀行の「未使用融資枠」に依存し始めています。これはシステム全体の準備金を占有し、市場を構造的窒息へ導く物理的な決壊サインです。",
+            "EN": "🔴 <b>BROKEN (Loss of Autonomy & Suffocation)</b>\nPhysical investment costs have breached cash-generating capacity. Firms have lost fiscal autonomy and begun relying on 'Unused Bank Commitments.' This signifies a physical rupture, where systemic reserves are drained, leading the market toward structural suffocation."
         }
-        # Check if columns exist (sometimes names vary slightly)
-        df_cols = df.columns.tolist()
-        # Simple mapping by index if names are tricky, but let's try strict first or soft match
-        # Let's map by likely position if standard map fails? 
-        # Actually, let's just rename based on known Japanese headers provided in inspection.
-        
-        # Clean specific chars like $, \n etc if needed, but CSV usually handles cleanly.
-        # But wait, Ticker_Raw is "Amazon (AMZN)". Need to extract AMZN.
-        
-        df_clean = pd.DataFrame()
-        # Find column checking
-        for c in df.columns:
-            if "Ticker" in c: col_map[c] = "Ticker_Raw"
-            elif "TWh" in c: col_map[c] = "TWh"
-            elif "Δ$/MWh" in c: col_map[c] = "Price_Delta"
-            elif "MW-day" in c: col_map[c] = "Res_Fee_Unit"
-            
-        df = df.rename(columns=col_map)
-        
-        # Extract Ticker
-        df['Ticker'] = df['Ticker_Raw'].apply(lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in str(x) else str(x))
-        
-        # Clean numeric columns (remove $, +, etc)
-        def clean_num(x):
-            if isinstance(x, str):
-                return float(x.replace('$','').replace('+','').replace(',',''))
-            return float(x)
-            
-        df['TWh'] = df['TWh'].apply(clean_num)
-        df['Price_Delta'] = df['Price_Delta'].apply(clean_num)
-        df['Res_Fee_Unit'] = df['Res_Fee_Unit'].apply(clean_num)
-        
-        return df[['Ticker', 'TWh', 'Price_Delta', 'Res_Fee_Unit']]
-    except Exception as e:
-        st.error(f"Physical Data Load Error: {e}")
-        # Fallback empty or local
-        try:
-             df = pd.read_csv("data/Physical_Metrics.csv")
-             # Apply same logic... (omitted for brevity, assume similar structure or handle basic)
-             # Basic rename
-             df = df.rename(columns={df.columns[0]:"Ticker_Raw", df.columns[1]:"TWh", df.columns[2]:"Price_Delta", df.columns[3]:"Res_Fee_Unit"})
-             df['Ticker'] = df['Ticker_Raw'].apply(lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in str(x) else str(x))
-             return df
-        except:
-             return pd.DataFrame()
-
-physical_df = load_physical_metrics()
-
-# Merge Physical with Financials
-metrics_df = pd.merge(metrics_df, physical_df, on='Ticker', how='left')
-# Fill NaNs for physics with 0
-metrics_df[['TWh', 'Price_Delta', 'Res_Fee_Unit']] = metrics_df[['TWh', 'Price_Delta', 'Res_Fee_Unit']].fillna(0)
-
-# --- Logic: Calculate PSR ---
-# PSR = FCF / (CapEx + Delta_Elec + Res_Fee)
-# Delta_Elec = TWh * 1,000,000 * Price_Delta
-# Res_Fee = (Wait, prompt said: "Capacity (MW) * Unit Price * 365")
-# BUT, the CSV does NOT have "Capacity (MW)". 
-# The CSV has "TWh". 
-# Ah, the PROMPT said "Reservation_Fee Calculation: Estimated Contract Capacity (MW) * ...".
-# But the CSV inspection shows columns: Ticker, TWh, Price Delta, Res Fee Unit. 
-# It MISSES "Capacity (MW)".
-# HOWEVER, TWh and Capacity are related. Capacity (MW) ~= (TWh * 1e6) / (8760 * Utilization).
-# OR check if I missed a column?
-# The user prompted "Data Source ...". I viewed it. It has "Ticker, TWh, Delta$, ResFee$, MainCause".
-# NO Capacity MW column.
-# I will Infer Capacity? Or is there a default logic?
-# "Reservation_Fee (予約費用): 推定契約容量 (MW) * ... "
-# Let's ESTIMATE MW from TWh assuming Data Center load factor (e.g. 90% or 100% flat?).
-# MW = (TWh * 1,000,000) / (24 * 365). 
-# Let's use that for now to complete the logic.
-
-def calc_psr_row(row):
-    fcf = row['FCF']
-    capex = abs(row['CapEx']) # Ensure positive
-    
-    # Physics
-    twh = row['TWh']
-    p_delta = row['Price_Delta']
-    res_unit = row['Res_Fee_Unit']
-    
-    # 1. Delta Electricity Cost
-    # TWh * 1,000,000 (MWh) * Price Delta
-    delta_elec_cost = twh * 1_000_000 * p_delta
-    
-    # 2. Reservation Fee
-    # MW = (TWh * 1e6) / 8760 (Assuming 100% Load Factor)
-    est_mw = (twh * 1_000_000) / 8760
-    
-    # Fee = MW * UnitPrice * 365
-    res_fee_cost = est_mw * res_unit * 365
-    
-    # Total Physical Burden
-    burden = capex + delta_elec_cost + res_fee_cost
-    
-    psr = fcf / burden if burden > 0 else 0
-    return psr, delta_elec_cost, res_fee_cost, burden
-
-# Apply
-metrics_df[['PSR', 'Cost_Elec', 'Cost_Res', 'Total_Burden']] = metrics_df.apply(lambda r: pd.Series(calc_psr_row(r)), axis=1)
-
-
-# --- APLC-5 Specific Logic ---
-APLC5_TICKERS = ["AMZN", "MSFT", "GOOGL", "META", "NVDA"]
-SURVIVOR_UNIVERSE = ["AMAT", "LRCX", "KLAC", "ASML", "TER"]
-
-# Filter for APLC-5 (Delayed to after Calculation to capture Survivor Data)
-# metrics_df = metrics_df[metrics_df['Ticker'].isin(APLC5_TICKERS)].copy()
-
-# Sensitivity Slider (Placed in Sidebar)
-with st.sidebar:
-    st.divider()
-    st.markdown(f"### {TRANSLATIONS['sidebar_stress'][lang]}")
-    # Default to PJM approx ($315)
-    global_res_fee = st.slider(TRANSLATIONS['sidebar_fee'][lang], 0.0, 1000.0, 315.0, 5.0, help="Adjust PJM/Global capacity reservation costs")
-
-    
-    # Delta Price Slider (Optional, but good for sensitivity)
-    # global_price_delta = st.slider("Elec. Price Delta ($/MWh)", 0.0, 100.0, 30.0) 
-    # For now, just Fee as requested.
-
-# --- PSR Calculation with Sensitivity ---
-def calc_psr_row(row, override_fee):
-    fcf = row['FCF']
-    capex = abs(row['CapEx']) 
-    
-    # Physics
-    twh = row['TWh']
-    p_delta = row['Price_Delta']
-    
-    # Use Slider Value for Sensitivity (Global Stress)
-    # Or keep individual if slider is at "default"? 
-    # Prompt says: "When PJM price is manipulated... 5 companies fluctuate".
-    # This implies using the slider value as the active unit price.
-    res_unit = override_fee
-    
-    # 1. Delta Electricity Cost
-    delta_elec_cost = twh * 1_000_000 * p_delta
-    
-    # 2. Reservation Fee
-    # MW = (TWh * 1e6) / 8760
-    est_mw = (twh * 1_000_000) / 8760
-    
-    # Fee = MW * UnitPrice * 365
-    res_fee_cost = est_mw * res_unit * 365
-    
-    # Total Physical Burden
-    burden = capex + delta_elec_cost + res_fee_cost
-    
-    psr = fcf / burden if burden > 0 else 0
-    return psr, delta_elec_cost, res_fee_cost, burden
-
-# Apply Calculation
-metrics_df[['PSR', 'Cost_Elec', 'Cost_Res', 'Total_Burden']] = metrics_df.apply(
-    lambda r: pd.Series(calc_psr_row(r, global_res_fee)), axis=1
-)
-
-# --- Split Dataframes ---
-# Save Full/Survivor data
-survivor_df = metrics_df[metrics_df['Ticker'].isin(SURVIVOR_UNIVERSE)].copy()
-
-# Filter for APLC-5 (Restoring original variable for downstream APLC cards)
-metrics_df = metrics_df[metrics_df['Ticker'].isin(APLC5_TICKERS)].copy()
-
-# --- APLC-5 Status Definitions ---
-APLC_MESSAGES = {
-    "LEVEL_1": {
-        "PSR": "> 1.4",
-        "Color": "#28A745", # Green
-        "Title_EN": "Structural Safety Zone",
-        "Title_JP": "構造的安全域",
-        "JP": "物理的自律性が極めて高い状態です。事業が生み出す現金が、巨額の設備投資（CapEx）のみならず、激しい電気代上昇や、送電網確保のための電力利用担保金（Reservation Fee）を支払ってもなお、40%以上の余力を残しています。外部資金や銀行与信に頼ることなく、自社の力だけでAI革命を継続できる唯一の領域です。エネルギー市場のボラティリティを完全に遮断できる「物理的な盾」を保持しています。",
-        "EN": "High physical autonomy. Cash generation remains robust enough to absorb massive CapEx, electricity cost increases, and capacity reservation fees while maintaining a 40% buffer. These firms can sustain the AI revolution without credit dependency. This zone represents the ultimate 'Physical Shield,' where structural resilience allows the entity to withstand extreme volatility in energy markets and financial shocks."
-    },
-    "LEVEL_2": {
-        "PSR": "1.1 - 1.4",
-        "Color": "#FFC107", # Yellow
-        "Title_EN": "Alert Zone",
-        "Title_JP": "警戒域",
-        "JP": "収益性は高いものの、インフラコストの膨張が「物理的な盾」を削り取っています。設備投資の規模に対し、予想を超える電気代上昇や電力利用担保金がキャッシュフローを侵食し、安全域が縮小しています。物理的な裏付けが薄まり、株価の正当化が「期待（ナラティブ）」に依存し始めるフェーズです。わずかなコスト増で下位ランクへ転落する脆弱性を孕んでおり、資本の自由度が物理的制約によって奪われ始めています。",
-        "EN": "Profitability is intact, but rising infrastructure costs are thinning the 'Physical Shield.' Expanding CapEx combined with unforeseen electricity cost increases and capacity reservation fees are eroding cash flow margins. As physical backing weakens, valuation logic begins to shift toward narrative dependency. This zone indicates a vulnerability where even minor cost spikes can trigger a transition to the Pre-Fracture Zone as physical limits restrict capital flexibility."
-    },
-    "LEVEL_3": {
-        "PSR": "1.0 - 1.1",
-        "Color": "#FD7E14", # Orange
-        "Title_EN": "Pre-Fracture Zone",
-        "Title_JP": "破断準備域",
-        "JP": "物理的限界が目前に迫り、外部与信（借金）への依存が不可避となる段階です。稼ぎ出す現金が、設備投資と電気代上昇・電力利用担保金の支払いでほぼ枯渇しています。この状態では、自社株買いの停止や格付けの再評価が現実味を帯びます。「強者」が物理コストによって「与信依存」に転じる臨界点であり、金融市場全体の流動性が低下した瞬間に、インフラ拡張が停止するリスクを内包した断層の境界線です。",
-        "EN": "Physical limits are imminent, making credit dependency mandatory. Cash flow is almost entirely consumed by CapEx, electricity cost increases, and capacity reservation fees. At this juncture, share buybacks may cease, and credit rating reassessment becomes a reality. This is the critical tipping point where 'Strong Entities' become debt-dependent due to physical costs, creating a fault line where any tightening of market liquidity could freeze infrastructure expansion."
-    },
-    "LEVEL_4": {
-        "PSR": "< 1.0",
-        "Color": "#DC3545", # Red
-        "Title_EN": "Physical Deficit Zone",
-        "Title_JP": "物理的赤字域",
-        "JP": "構造的破綻。AIを稼働させるための電気代と電力利用担保金、そして継続的な設備投資が、稼ぎ出す現金を上回る「逆ざや」が発生しています。もはやAIは利益を生む資産ではなく、市場全体の流動性を吸い上げる「物理的負債」と化しています。この現金の消失は、金融システムを窒息させる断層となり、ナラティブでは決して解決できない「物理的な死」を予見させます。システム全体の決壊の起点となる最悪のステータスです。",
-        "EN": "Structural collapse. A 'physical deficit' has emerged where the electricity costs, reservation fees, and continuous CapEx required to sustain AI exceed cash generation. AI has transformed from a profit-generating asset into a 'physical liability' that drains global market liquidity. This evaporation of cash creates a systemic fracture that suffocates the financial system, signaling a 'Physical Death' that no narrative can rectify. This is the ultimate red line of systemic failure."
     }
-}
 
-def get_psr_level(psr):
-    if psr > 1.4: return "LEVEL_1"
-    elif psr >= 1.1: return "LEVEL_2"
-    elif psr >= 1.0: return "LEVEL_3"
-    else: return "LEVEL_4"
+    # --- New Data Source: Physical Metrics ---
+    PHYSICAL_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRgul7PbiP2EYy8KiPmMglhd2R-oXTriikeZCZxQHKtrxLgbwJyEiGuprBsdAEDMR_F2te9E2GQRTYb/pub?output=csv"
 
-# --- Main Indicator: Minimum PSR ---
-min_psr_row = metrics_df.loc[metrics_df['PSR'].idxmin()]
-min_psr_val = min_psr_row['PSR']
-min_psr_ticker = min_psr_row['Ticker']
-min_level_key = get_psr_level(min_psr_val)
-min_level_data = APLC_MESSAGES[min_level_key]
+    @st.cache_data(ttl=3600)
+    def load_physical_metrics():
+        try:
+            df = pd.read_csv(PHYSICAL_SHEET_URL)
+            # Rename Japanese columns to internal English keys
+            # 銘柄 (Ticker), 電力総使用量 (Annual TWh), 電力上昇単価 (Δ$/MWh), 予約費用単価 (加重 $/MW-day), ...
+            col_map = {
+                "銘柄 (Ticker)": "Ticker_Raw",
+                "電力総使用量 (Annual TWh)": "TWh",
+                "電力上昇単価 (Δ$/MWh)": "Price_Delta",
+                "予約費用単価 (加重 $/MW-day)": "Res_Fee_Unit"
+            }
+            # Check if columns exist (sometimes names vary slightly)
+            df_cols = df.columns.tolist()
+            # Simple mapping by index if names are tricky, but let's try strict first or soft match
+            # Let's map by likely position if standard map fails? 
+            # Actually, let's just rename based on known Japanese headers provided in inspection.
+            
+            # Clean specific chars like $, \n etc if needed, but CSV usually handles cleanly.
+            # But wait, Ticker_Raw is "Amazon (AMZN)". Need to extract AMZN.
+            
+            df_clean = pd.DataFrame()
+            # Find column checking
+            for c in df.columns:
+                if "Ticker" in c: col_map[c] = "Ticker_Raw"
+                elif "TWh" in c: col_map[c] = "TWh"
+                elif "Δ$/MWh" in c: col_map[c] = "Price_Delta"
+                elif "MW-day" in c: col_map[c] = "Res_Fee_Unit"
+                
+            df = df.rename(columns=col_map)
+            
+            # Extract Ticker
+            df['Ticker'] = df['Ticker_Raw'].apply(lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in str(x) else str(x))
+            
+            # Clean numeric columns (remove $, +, etc)
+            def clean_num(x):
+                if isinstance(x, str):
+                    return float(x.replace('$','').replace('+','').replace(',',''))
+                return float(x)
+                
+            df['TWh'] = df['TWh'].apply(clean_num)
+            df['Price_Delta'] = df['Price_Delta'].apply(clean_num)
+            df['Res_Fee_Unit'] = df['Res_Fee_Unit'].apply(clean_num)
+            
+            return df[['Ticker', 'TWh', 'Price_Delta', 'Res_Fee_Unit']]
+        except Exception as e:
+            st.error(f"Physical Data Load Error: {e}")
+            # Fallback empty or local
+            try:
+                 df = pd.read_csv("data/Physical_Metrics.csv")
+                 # Apply same logic... (omitted for brevity, assume similar structure or handle basic)
+                 # Basic rename
+                 df = df.rename(columns={df.columns[0]:"Ticker_Raw", df.columns[1]:"TWh", df.columns[2]:"Price_Delta", df.columns[3]:"Res_Fee_Unit"})
+                 df['Ticker'] = df['Ticker_Raw'].apply(lambda x: x.split('(')[-1].replace(')', '').strip() if '(' in str(x) else str(x))
+                 return df
+            except:
+                 return pd.DataFrame()
 
-l1_msg_key = "JP" if lang == "日本語" else "EN"
-title_key = f"Title_{l1_msg_key}"
+    physical_df = load_physical_metrics()
 
-# Labels based on lang
-label_weakest = "APLC-5 Minimum PSR (Weakest Link)" if lang == "English" else "APLC-5 最低PSR (最弱リンク)"
-label_psr = "Physical Solvency Ratio" if lang == "English" else "物理的ソルベンシー比率"
+    # Merge Physical with Financials
+    metrics_df = pd.merge(metrics_df, physical_df, on='Ticker', how='left')
+    # Fill NaNs for physics with 0
+    metrics_df[['TWh', 'Price_Delta', 'Res_Fee_Unit']] = metrics_df[['TWh', 'Price_Delta', 'Res_Fee_Unit']].fillna(0)
+
+    # --- Logic: Calculate PSR ---
+    # PSR = FCF / (CapEx + Delta_Elec + Res_Fee)
+    # Delta_Elec = TWh * 1,000,000 * Price_Delta
+    # Res_Fee = (Wait, prompt said: "Capacity (MW) * Unit Price * 365")
+    # BUT, the CSV does NOT have "Capacity (MW)". 
+    # The CSV has "TWh". 
+    # Ah, the PROMPT said "Reservation_Fee Calculation: Estimated Contract Capacity (MW) * ...".
+    # But the CSV inspection shows columns: Ticker, TWh, Price Delta, Res Fee Unit. 
+    # It MISSES "Capacity (MW)".
+    # HOWEVER, TWh and Capacity are related. Capacity (MW) ~= (TWh * 1e6) / (8760 * Utilization).
+    # OR check if I missed a column?
+    # The user prompted "Data Source ...". I viewed it. It has "Ticker, TWh, Delta$, ResFee$, MainCause".
+    # NO Capacity MW column.
+    # I will Infer Capacity? Or is there a default logic?
+    # "Reservation_Fee (予約費用): 推定契約容量 (MW) * ... "
+    # Let's ESTIMATE MW from TWh assuming Data Center load factor (e.g. 90% or 100% flat?).
+    # MW = (TWh * 1,000,000) / (24 * 365). 
+    # Let's use that for now to complete the logic.
+
+    def calc_psr_row(row):
+        fcf = row['FCF']
+        capex = abs(row['CapEx']) # Ensure positive
+        
+        # Physics
+        twh = row['TWh']
+        p_delta = row['Price_Delta']
+        res_unit = row['Res_Fee_Unit']
+        
+        # 1. Delta Electricity Cost
+        # TWh * 1,000,000 (MWh) * Price Delta
+        delta_elec_cost = twh * 1_000_000 * p_delta
+        
+        # 2. Reservation Fee
+        # MW = (TWh * 1e6) / 8760 (Assuming 100% Load Factor)
+        est_mw = (twh * 1_000_000) / 8760
+        
+        # Fee = MW * UnitPrice * 365
+        res_fee_cost = est_mw * res_unit * 365
+        
+        # Total Physical Burden
+        burden = capex + delta_elec_cost + res_fee_cost
+        
+        psr = fcf / burden if burden > 0 else 0
+        return psr, delta_elec_cost, res_fee_cost, burden
+
+    # Apply
+    metrics_df[['PSR', 'Cost_Elec', 'Cost_Res', 'Total_Burden']] = metrics_df.apply(lambda r: pd.Series(calc_psr_row(r)), axis=1)
 
 
-# Display Main Indicator
-st.markdown(f"""
-<div class="judgment-panel" style="border-left: 8px solid {min_level_data['Color']}; padding: 25px;">
-    <div style="font-size: 1rem; color: #666; font-weight: bold; text-transform: uppercase; margin-bottom: 5px;">
-        {label_weakest}
+    # --- APLC-5 Specific Logic ---
+    APLC5_TICKERS = ["AMZN", "MSFT", "GOOGL", "META", "NVDA"]
+    SURVIVOR_UNIVERSE = ["AMAT", "LRCX", "KLAC", "ASML", "TER"]
+
+    # Filter for APLC-5 (Delayed to after Calculation to capture Survivor Data)
+    # metrics_df = metrics_df[metrics_df['Ticker'].isin(APLC5_TICKERS)].copy()
+
+    # Sensitivity Slider (Placed in Sidebar)
+    with st.sidebar:
+        st.divider()
+        st.markdown(f"### {TRANSLATIONS['sidebar_stress'][lang]}")
+        # Default to PJM approx ($315)
+        global_res_fee = st.slider(TRANSLATIONS['sidebar_fee'][lang], 0.0, 1000.0, 315.0, 5.0, help="Adjust PJM/Global capacity reservation costs")
+
+        
+        # Delta Price Slider (Optional, but good for sensitivity)
+        # global_price_delta = st.slider("Elec. Price Delta ($/MWh)", 0.0, 100.0, 30.0) 
+        # For now, just Fee as requested.
+
+    # --- PSR Calculation with Sensitivity ---
+    def calc_psr_row(row, override_fee):
+        fcf = row['FCF']
+        capex = abs(row['CapEx']) 
+        
+        # Physics
+        twh = row['TWh']
+        p_delta = row['Price_Delta']
+        
+        # Use Slider Value for Sensitivity (Global Stress)
+        # Or keep individual if slider is at "default"? 
+        # Prompt says: "When PJM price is manipulated... 5 companies fluctuate".
+        # This implies using the slider value as the active unit price.
+        res_unit = override_fee
+        
+        # 1. Delta Electricity Cost
+        delta_elec_cost = twh * 1_000_000 * p_delta
+        
+        # 2. Reservation Fee
+        # MW = (TWh * 1e6) / 8760
+        est_mw = (twh * 1_000_000) / 8760
+        
+        # Fee = MW * UnitPrice * 365
+        res_fee_cost = est_mw * res_unit * 365
+        
+        # Total Physical Burden
+        burden = capex + delta_elec_cost + res_fee_cost
+        
+        psr = fcf / burden if burden > 0 else 0
+        return psr, delta_elec_cost, res_fee_cost, burden
+
+    # Apply Calculation
+    metrics_df[['PSR', 'Cost_Elec', 'Cost_Res', 'Total_Burden']] = metrics_df.apply(
+        lambda r: pd.Series(calc_psr_row(r, global_res_fee)), axis=1
+    )
+
+    # --- Split Dataframes ---
+    # Save Full/Survivor data
+    survivor_df = metrics_df[metrics_df['Ticker'].isin(SURVIVOR_UNIVERSE)].copy()
+
+    # Filter for APLC-5 (Restoring original variable for downstream APLC cards)
+    metrics_df = metrics_df[metrics_df['Ticker'].isin(APLC5_TICKERS)].copy()
+
+    # --- CapEx Audit Integration ---
+    capex_audit_df = build_capex_audit_from_yf(APLC5_TICKERS)
+    metrics_df = pd.merge(metrics_df, capex_audit_df, on="Ticker", how="left")
+
+    # Metrics Calc (Defense against NaN)
+    metrics_df["CapEx_to_NI"] = np.where(metrics_df["NI_Q"].abs() > 0, metrics_df["CapEx_Q"].abs() / metrics_df["NI_Q"].abs(), np.nan)
+    metrics_df["CapEx_to_OCF"] = np.where(metrics_df["OCF_Q"].abs() > 0, metrics_df["CapEx_Q"].abs() / metrics_df["OCF_Q"].abs(), np.nan)
+
+    metrics_df["CapExHealth"] = metrics_df.apply(classify_capex_health, axis=1)
+
+
+    # --- APLC-5 Status Definitions ---
+    APLC_MESSAGES = {
+        "LEVEL_1": {
+            "PSR": "> 1.4",
+            "Color": "#28A745", # Green
+            "Title_EN": "Structural Safety Zone",
+            "Title_JP": "構造的安全域",
+            "JP": "物理的自律性が極めて高い状態です。事業が生み出す現金が、巨額の設備投資（CapEx）のみならず、激しい電気代上昇や、送電網確保のための電力利用担保金（Reservation Fee）を支払ってもなお、40%以上の余力を残しています。外部資金や銀行与信に頼ることなく、自社の力だけでAI革命を継続できる唯一の領域です。エネルギー市場のボラティリティを完全に遮断できる「物理的な盾」を保持しています。",
+            "EN": "High physical autonomy. Cash generation remains robust enough to absorb massive CapEx, electricity cost increases, and capacity reservation fees while maintaining a 40% buffer. These firms can sustain the AI revolution without credit dependency. This zone represents the ultimate 'Physical Shield,' where structural resilience allows the entity to withstand extreme volatility in energy markets and financial shocks."
+        },
+        "LEVEL_2": {
+            "PSR": "1.1 - 1.4",
+            "Color": "#FFC107", # Yellow
+            "Title_EN": "Alert Zone",
+            "Title_JP": "警戒域",
+            "JP": "収益性は高いものの、インフラコストの膨張が「物理的な盾」を削り取っています。設備投資の規模に対し、予想を超える電気代上昇や電力利用担保金がキャッシュフローを侵食し、安全域が縮小しています。物理的な裏付けが薄まり、株価の正当化が「期待（ナラティブ）」に依存し始めるフェーズです。わずかなコスト増で下位ランクへ転落する脆弱性を孕んでおり、資本の自由度が物理的制約によって奪われ始めています。",
+            "EN": "Profitability is intact, but rising infrastructure costs are thinning the 'Physical Shield.' Expanding CapEx combined with unforeseen electricity cost increases and capacity reservation fees are eroding cash flow margins. As physical backing weakens, valuation logic begins to shift toward narrative dependency. This zone indicates a vulnerability where even minor cost spikes can trigger a transition to the Pre-Fracture Zone as physical limits restrict capital flexibility."
+        },
+        "LEVEL_3": {
+            "PSR": "1.0 - 1.1",
+            "Color": "#FD7E14", # Orange
+            "Title_EN": "Pre-Fracture Zone",
+            "Title_JP": "破断準備域",
+            "JP": "物理的限界が目前に迫り、外部与信（借金）への依存が不可避となる段階です。稼ぎ出す現金が、設備投資と電気代上昇・電力利用担保金の支払いでほぼ枯渇しています。この状態では、自社株買いの停止や格付けの再評価が現実味を帯びます。「強者」が物理コストによって「与信依存」に転じる臨界点であり、金融市場全体の流動性が低下した瞬間に、インフラ拡張が停止するリスクを内包した断層の境界線です。",
+            "EN": "Physical limits are imminent, making credit dependency mandatory. Cash flow is almost entirely consumed by CapEx, electricity cost increases, and capacity reservation fees. At this juncture, share buybacks may cease, and credit rating reassessment becomes a reality. This is the critical tipping point where 'Strong Entities' become debt-dependent due to physical costs, creating a fault line where any tightening of market liquidity could freeze infrastructure expansion."
+        },
+        "LEVEL_4": {
+            "PSR": "< 1.0",
+            "Color": "#DC3545", # Red
+            "Title_EN": "Physical Deficit Zone",
+            "Title_JP": "物理的赤字域",
+            "JP": "構造的破綻。AIを稼働させるための電気代と電力利用担保金、そして継続的な設備投資が、稼ぎ出す現金を上回る「逆ざや」が発生しています。もはやAIは利益を生む資産ではなく、市場全体の流動性を吸い上げる「物理的負債」と化しています。この現金の消失は、金融システムを窒息させる断層となり、ナラティブでは決して解決できない「物理的な死」を予見させます。システム全体の決壊の起点となる最悪のステータスです。",
+            "EN": "Structural collapse. A 'physical deficit' has emerged where the electricity costs, reservation fees, and continuous CapEx required to sustain AI exceed cash generation. AI has transformed from a profit-generating asset into a 'physical liability' that drains global market liquidity. This evaporation of cash creates a systemic fracture that suffocates the financial system, signaling a 'Physical Death' that no narrative can rectify. This is the ultimate red line of systemic failure."
+        }
+    }
+
+    def get_psr_level(psr):
+        if psr > 1.4: return "LEVEL_1"
+        elif psr >= 1.1: return "LEVEL_2"
+        elif psr >= 1.0: return "LEVEL_3"
+        else: return "LEVEL_4"
+
+    # --- Main Indicator: Minimum PSR ---
+    min_psr_row = metrics_df.loc[metrics_df['PSR'].idxmin()]
+    min_psr_val = min_psr_row['PSR']
+    min_psr_ticker = min_psr_row['Ticker']
+    min_level_key = get_psr_level(min_psr_val)
+    min_level_data = APLC_MESSAGES[min_level_key]
+
+    l1_msg_key = "JP" if lang == "日本語" else "EN"
+    title_key = f"Title_{l1_msg_key}"
+
+    # Labels based on lang
+    label_weakest = "APLC-5 Minimum PSR (Weakest Link)" if lang == "English" else "APLC-5 最低PSR (最弱リンク)"
+    label_psr = "Physical Solvency Ratio" if lang == "English" else "物理的ソルベンシー比率"
+
+
+    # Display Main Indicator
+    st.markdown(f"""
+    <div class="judgment-panel" style="border-top: 4px solid {min_level_data['Color']}; padding: 25px;">
+        <div style="font-size: 1rem; color: #666; font-weight: bold; text-transform: uppercase; margin-bottom: 5px;">
+            {label_weakest}
+        </div>
+        <div style="display: flex; align-items: baseline; gap: 15px;">
+            <div style="font-size: 3.5rem; font-weight: 800; color: {min_level_data['Color']}; line-height: 1;">
+                {min_psr_val:.2f}
+            </div>
+            <div style="font-size: 1.5rem; font-weight: 600; color: #333;">
+                {min_psr_ticker}
+            </div>
+            <div style="font-size: 1.5rem; font-weight: 700; color: {min_level_data['Color']};">
+                {min_level_data[title_key]}
+            </div>
+        </div>
+        <div style="margin-top: 15px; font-size: 1rem; line-height: 1.6;">
+            {min_level_data[l1_msg_key]}
+        </div>
     </div>
-    <div style="display: flex; align-items: baseline; gap: 15px;">
-        <div style="font-size: 3.5rem; font-weight: 800; color: {min_level_data['Color']}; line-height: 1;">
-            {min_psr_val:.2f}
-        </div>
-        <div style="font-size: 1.5rem; font-weight: 600; color: #333;">
-            {min_psr_ticker}
-        </div>
-        <div style="font-size: 1.2rem; font-weight: 500; color: {min_level_data['Color']};">
-            {min_level_data[title_key]}
-        </div>
-    </div>
-    <div style="margin-top: 15px; font-size: 1rem; line-height: 1.6;">
-        {min_level_data[l1_msg_key]}
-    </div>
-</div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-# Cards (Fixed Loop Bug: use reset_index to ensure 0-based idx for columns)
-cols = st.columns(len(metrics_df)) 
-for idx, row in metrics_df.reset_index(drop=True).iterrows():
-    ticker = row['Ticker']
-    price = row['Price']
-    psr = row['PSR']
-    fcf = row['FCF']
-    burden = row['Total_Burden']
-    
-    capex = abs(row['CapEx'])
-    c_elec = row['Cost_Elec']
-    c_res = row['Cost_Res']
-    
-    # Level Determine
-    lvl_key = get_psr_level(psr)
-    lvl_data = APLC_MESSAGES[lvl_key]
-    
-    # Card Border Styling
-    card_style = f"border-top: 5px solid {lvl_data['Color']} !important;"
-    
-    with cols[idx % 5]:
-        st.markdown(f"""
-        <div class="metric-card" style="{card_style}">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 5px;">
-                <h3 style="margin:0; font-size:1.1rem;">{ticker}</h3>
-                <span style="font-weight:bold; color:#888; font-size: 0.9rem;">${price:,.0f}</span>
-            </div>
-            <div style="font-size:0.7rem; color:#888;">{label_psr}</div>
-            <div style="font-size:1.8rem; font-weight:800; color:{lvl_data['Color']}; margin-bottom: 5px;">
-                {psr:.2f}
-            </div>
-             <div style="font-size:0.7rem; color:{lvl_data['Color']}; font-weight:bold; margin-bottom: 8px;">
-                {lvl_data[title_key]}
-            </div>
-            <div style="font-size:0.65rem; color:#666; background:#f8f9fa; padding:6px; border-radius:4px;">
-                <div style="display:flex; justify-content:space-between;">
-                    <span>{TRANSLATIONS['fcf_label'][lang]}</span>
-                    <span>${fcf/1e9:,.2f}B</span>
+
+
+
+
+
+    # Cards (Fixed Loop Bug: use reset_index to ensure 0-based idx for columns)
+    cols = st.columns(len(metrics_df)) 
+    for idx, row in metrics_df.reset_index(drop=True).iterrows():
+        ticker = row['Ticker']
+        price = row['Price']
+        psr = row['PSR']
+        fcf = row['FCF']
+        burden = row['Total_Burden']
+        
+        capex = abs(row['CapEx'])
+        c_elec = row['Cost_Elec']
+        c_res = row['Cost_Res']
+        
+
+        # --- CapEx Health Logic (UI) ---
+        health = row.get("CapExHealth", "HEALTHY")
+        health_color_map = {
+            "HEALTHY": "#28A745",
+            "BOUNDARY": "#FFC107",
+            "BLACK_HOLE": "#DC3545"
+        }
+        health_color = health_color_map.get(health, "#6c757d")
+        
+        # Translate status
+        health_label = t_capex_health(health, lang)
+        health_desc  = t_capex_desc(health, lang)
+        status_title = "CapEx Status:" if lang == "English" else "CapEx 状態:"
+
+        # Level Determine
+        lvl_key = get_psr_level(psr)
+        lvl_data = APLC_MESSAGES[lvl_key]
+        
+        # Card styling (Clean container)
+        # Use border-top instead of inner div to ensure visibility
+        
+        with cols[idx % 5]:
+            st.markdown(f"""
+            <div class="metric-card" style="border-top: 4px solid {lvl_data['Color']}; padding: 15px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 5px;">
+                    <h3 style="margin:0; font-size:1.1rem;">{ticker}</h3>
+                    <span style="font-weight:bold; color:#888; font-size: 0.9rem;">${price:,.0f}</span>
                 </div>
-                <div style="border-top:1px solid #ddd; margin-top:2px; padding-top:2px; display:flex; justify-content:space-between;">
-                    <span>{TRANSLATIONS['burden_label'][lang]}</span>
-                    <span>${burden/1e9:,.2f}B</span>
+                <div style="font-size:0.7rem; color:#888;">{label_psr}</div>
+                <div style="font-size:1.8rem; font-weight:800; color:{lvl_data['Color']}; margin-bottom: 5px;">
+                    {psr:.2f}
                 </div>
-                <div style="margin-top:4px; padding-top:4px; border-top:1px dashed #eee; color:#888; font-size: 0.6rem; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;">
-                   <span>{TRANSLATIONS['capex_label'][lang]}: ${capex/1e9:,.2f}B</span>
-                   <span>{TRANSLATIONS['elec_label'][lang]}: ${c_elec/1e9:,.2f}B</span>
-                   <span>{TRANSLATIONS['res_label'][lang]}: ${c_res/1e9:,.2f}B</span>
+                 <div style="font-size:0.7rem; color:{lvl_data['Color']}; font-weight:bold; margin-bottom: 8px;">
+                    {lvl_data[title_key]}
+                </div>
+                <div style="font-size:0.65rem; color:#666; background:#f8f9fa; padding:6px; border-radius:4px;">
+                    <div style="display:flex; justify-content:space-between;">
+                        <span>{TRANSLATIONS['fcf_label'][lang]}</span>
+                        <span>${fcf/1e9:,.2f}B</span>
+                    </div>
+                    <div style="border-top:1px solid #ddd; margin-top:2px; padding-top:2px; display:flex; justify-content:space-between;">
+                        <span>{TRANSLATIONS['burden_label'][lang]}</span>
+                        <span>${burden/1e9:,.2f}B</span>
+                    </div>
+                    <div style="margin-top:4px; padding-top:4px; border-top:1px dashed #eee; color:#888; font-size: 0.6rem; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;">
+                       <span>{TRANSLATIONS['capex_label'][lang]}: ${capex/1e9:,.2f}B</span>
+                       <span>{TRANSLATIONS['elec_label'][lang]}: ${c_elec/1e9:,.2f}B</span>
+                       <span>{TRANSLATIONS['res_label'][lang]}: ${c_res/1e9:,.2f}B</span>
+                    </div>
                 </div>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+
+    # --- CapEx Audit Table UI (Moved) ---
+    st.markdown('<div style="margin-top: 30px;"></div>', unsafe_allow_html=True)
+    st.markdown("#### APLC-5 CapEx Quarterly Audit" if lang=="English" else "#### APLC-5 CapEx四半期監査")
+
+    # 1. Create Internal Data View (Strict English Keys)
+    quarterly_view = pd.DataFrame()
+    quarterly_view["Ticker"] = metrics_df["Ticker"] # Keep Ticker as index-like column
+    quarterly_view["Quarter"] = metrics_df["Period"]
+    quarterly_view["NetIncome"] = (metrics_df["NI_Q"] / 1e9)
+    quarterly_view["OperatingCashFlow"] = (metrics_df["OCF_Q"] / 1e9)
+    quarterly_view["CapitalExpenditure"] = (metrics_df["CapEx_Q"] / 1e9)
+    quarterly_view["CapEx_to_NI"] = metrics_df["CapEx_to_NI"]
+    quarterly_view["CapEx_to_OCF"] = metrics_df["CapEx_to_OCF"]
+    quarterly_view["CapEx_Status"] = metrics_df["CapExHealth"]
+
+    # 2. Translate Status Values (Value Translation only)
+    quarterly_view["CapEx_Status"] = quarterly_view["CapEx_Status"].apply(
+        lambda x: CAPEX_STATUS_LABELS.get(x, {}).get(lang, x)
+    )
+
+    # 3. Localize Columns (Header Translation)
+    display_df = localize_quarterly_df(quarterly_view, lang)
+
+    # 4. formatting (Dynamic mapping based on lang)
+    format_rules = {
+        "NetIncome": "${:.2f}B",
+        "OperatingCashFlow": "${:.2f}B",
+        "CapitalExpenditure": "${:.2f}B",
+        "CapEx_to_NI": "{:.2f}",
+        "CapEx_to_OCF": "{:.2f}",
+    }
+
+    # Map internal keys to current display columns
+    display_format = {
+        TRANSLATIONS[COLUMN_LABEL_MAP[k]][lang]: v 
+        for k, v in format_rules.items() 
+        if k in COLUMN_LABEL_MAP
+    }
+
+    # 5. Styling Function
+    def highlight_status(val):
+        # Reverse lookup or brute force check
+        color = "black" 
+        for key, trans_dict in CAPEX_STATUS_LABELS.items():
+            if val == trans_dict.get(lang, ""):
+                if key == "HEALTHY": color = "#28A745"
+                elif key == "BOUNDARY": color = "#BD8804" 
+                elif key == "BLACK_HOLE": color = "#DC3545"
+                break
+                
+        return f'color: {color}; font-weight: bold;'
+
+    status_col_name = TRANSLATIONS[COLUMN_LABEL_MAP["CapEx_Status"]][lang]
+
+    st.dataframe(
+        display_df.style.format(display_format).map(highlight_status, subset=[status_col_name]),
+        use_container_width=True
+    )
+
+    # --- Legend Section (Moved) ---
+    legend_cols = st.columns(3)
+    status_keys = ["HEALTHY", "BOUNDARY", "BLACK_HOLE"]
+    status_colors = {"HEALTHY": "#28A745", "BOUNDARY": "#BD8804", "BLACK_HOLE": "#DC3545"}
+    icons = {"HEALTHY": "🟢", "BOUNDARY": "🟡", "BLACK_HOLE": "🔴"}
+
+    for i, key in enumerate(status_keys):
+        c_label = CAPEX_STATUS_LABELS[key][lang]
+        c_desc = CAPEX_HEALTH_DESC[key][lang]
+        c_color = status_colors[key]
+        
+        with legend_cols[i]:
+            st.markdown(f"""
+            <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; height: 100%;">
+                <div style="color: {c_color}; font-weight: bold; margin-bottom: 5px;">
+                    {icons[key]} {c_label}
+                </div>
+                <div style="font-size: 0.8rem; line-height: 1.4; color: #555;">
+                    {c_desc}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown('<div style="margin-bottom: 30px;"></div>', unsafe_allow_html=True)
+
 
 # --- Layer 2 Messages (Detailed) ---
 L2_MESSAGES = {
@@ -1227,58 +1445,63 @@ def evaluate_l2_status(sofr_spread, tnx_dev, real_yield, tail):
         
     return comp_status, s_sofr, s_tnx, s_real, s_tail
 
-# Liquidity Monitor (Title Updated: removed Layer 2 label)
-l2_title_clean = "Systemic Liquidity Friction Monitor" if lang == "English" else "システム流動性摩擦モニター"
-st.subheader(l2_title_clean)
-st.markdown(TRANSLATIONS['l2_desc'][lang], unsafe_allow_html=True)
+with tabs[1]:
+    # Liquidity Monitor (Title Updated: removed Layer 2 label)
+    l2_title_clean = "Systemic Liquidity Friction Monitor" if lang == "English" else "システム流動性摩擦モニター"
+    st.subheader(l2_title_clean)
+    st.markdown(TRANSLATIONS['l2_desc'][lang], unsafe_allow_html=True)
 
-# Prepare Data for L2 Evaluation
-val_rates_hist = market_data.get('Rates_History', pd.DataFrame())
-val_tnx_div = market_data.get('TNX_Div', pd.DataFrame())
-val_real_yield = market_data.get('Real_Yield', pd.DataFrame())
-val_tail_df = liquidity_df_mock 
+    # Prepare Data for L2 Evaluation
+    val_sofr = market_data.get('SOFR', 5.3)
+    val_iorb = market_data.get('IORB', 5.4)
+    val_spread = val_sofr - val_iorb
 
-# Current Values (Latest)
-l2_sofr_spread = val_spread * 100 
-cur_spread = val_spread 
+    val_rates_hist = market_data.get('Rates_History', pd.DataFrame())
+    val_tnx_div = market_data.get('TNX_Div', pd.DataFrame())
+    val_real_yield = market_data.get('Real_Yield', pd.DataFrame())
+    val_tail_df = liquidity_df_mock 
 
-# TNX Dev
-cur_tnx_dev = 0.0
-if not val_tnx_div.empty:
-    cur_tnx_dev = val_tnx_div['Divergence'].iloc[-1]
+    # Current Values (Latest)
+    l2_sofr_spread = val_spread * 100 
+    cur_spread = val_spread 
 
-# Real Yield
-cur_real_yield = 0.0
-if not val_real_yield.empty:
-    cur_real_yield = val_real_yield['value'].iloc[-1]
+    # TNX Dev
+    cur_tnx_dev = 0.0
+    if not val_tnx_div.empty:
+        cur_tnx_dev = val_tnx_div['Divergence'].iloc[-1]
 
-# Tail
-cur_tail = 0.0
-if not val_tail_df.empty:
-    cur_tail = val_tail_df['Treasury_Tail'].iloc[-1]
+    # Real Yield
+    cur_real_yield = 0.0
+    if not val_real_yield.empty:
+        cur_real_yield = val_real_yield['value'].iloc[-1]
 
-# Evaluate
-comp_stat, s_sofr, s_tnx, s_real, s_tail = evaluate_l2_status(cur_spread, cur_tnx_dev, cur_real_yield, cur_tail)
+    # Tail
+    cur_tail = 0.0
+    if not val_tail_df.empty:
+        cur_tail = val_tail_df['Treasury_Tail'].iloc[-1]
 
-# Composite Panel
-l2_meta = STATUS_MAP[comp_stat]
-l2_msg_key = "JP" if lang == "日本語" else "EN"
-st.markdown(f'''
-<div class="judgment-panel {l2_meta['class']}" style="padding: 15px; margin-bottom: 20px;">
-    {L2_MESSAGES['COMPOSITE'][comp_stat][l2_msg_key]}
-</div>
-''', unsafe_allow_html=True)
+    # Evaluate
+    comp_stat, s_sofr, s_tnx, s_real, s_tail = evaluate_l2_status(cur_spread, cur_tnx_dev, cur_real_yield, cur_tail)
 
-l2_c1, l2_c2, l2_c3, l2_c4 = st.columns(4)
+    # Composite Panel
+    l2_meta = STATUS_MAP[comp_stat]
+    l2_msg_key = "JP" if lang == "日本語" else "EN"
+    st.markdown(f'''
+    <div class="judgment-panel {l2_meta['class']}" style="padding: 15px; margin-bottom: 20px;">
+        {L2_MESSAGES['COMPOSITE'][comp_stat][l2_msg_key]}
+    </div>
+    ''', unsafe_allow_html=True)
 
-chart_config = dict(
-    paper_bgcolor='rgba(0,0,0,0)', 
-    plot_bgcolor='rgba(0,0,0,0)', 
-    height=200,
-    margin=dict(l=0, r=0, t=10, b=0),
-    font=dict(size=10)
-)
-date_cutoff = pd.Timestamp("2026-01-01")
+    l2_c1, l2_c2, l2_c3, l2_c4 = st.columns(4)
+
+    chart_config = dict(
+        paper_bgcolor='rgba(0,0,0,0)', 
+        plot_bgcolor='rgba(0,0,0,0)', 
+        height=200,
+        margin=dict(l=0, r=0, t=10, b=0),
+        font=dict(size=10)
+    )
+    date_cutoff = pd.Timestamp("2026-01-01")
 
 # --- Credit → Equity Status Logic ---
 
@@ -1694,9 +1917,9 @@ if not val_tail_df.empty:
 
 render_l2_card(l2_c4, f"{TRANSLATIONS['tail_title'][lang]}", s_tail, L2_MESSAGES['TAIL'], fig_4, f"{cur_tail:.2f}")
 
-# --- Credit → Equity Transmission Monitor ---
-st.divider()
-credit_to_equity_panel(lang)
+with tabs[2]:
+    # --- Credit → Equity Transmission Monitor ---
+    credit_to_equity_panel(lang)
 
 # --- New: Danger Source Data (Equity / Credit Proxies) ---
 
@@ -2025,367 +2248,367 @@ def quadrant_label(sens_level, vel_level):
 
 # --- Danger Source Monitor Section ---
 
-st.divider()
-section_title = "Danger Source Monitor" if lang == "English" else "危険源モニタ"
-st.subheader(section_title)
+with tabs[3]:
+    section_title = "Danger Source Monitor" if lang == "English" else "危険源モニター"
+    st.subheader(section_title)
 
-# 説明文（短め）
-if lang == "日本語":
-    st.markdown("""
-データセンター関連クレジットと半導体装置セクターが、指数より一足先に「静かに壊れ始めていないか」を検知するためのモニタです。  
-ここでは、**装置株 vs SOXX の相対パフォーマンス**,  **DCクレジットとHYの乖離**, **物理PSRと株価のミスマッチ**の3軸で「危ない側だけ深く沈んでいく」動きを監視します。
-""")
-else:
-    st.markdown("""
-This monitor is designed to detect whether data-center credit and semi equipment are starting to break **quietly ahead of the index**.  
-It tracks three axes: **semi vs SOXX relative performance**,**DC credit vs HY divergence**, and **mismatch between physical PSR and index pricing**,to flag situations where the “dangerous side” is sinking in isolation.
-""")
+    # 説明文（短め）
+    if lang == "日本語":
+        st.markdown("""
+    データセンター関連クレジットと半導体装置セクターが、指数より一足先に「静かに壊れ始めていないか」を検知するためのモニタです。  
+    ここでは、**装置株 vs SOXX の相対パフォーマンス**,  **DCクレジットとHYの乖離**, **物理PSRと株価のミスマッチ**の3軸で「危ない側だけ深く沈んでいく」動きを監視します。
+    """)
+    else:
+        st.markdown("""
+    This monitor is designed to detect whether data-center credit and semi equipment are starting to break **quietly ahead of the index**.  
+    It tracks three axes: **semi vs SOXX relative performance**,**DC credit vs HY divergence**, and **mismatch between physical PSR and index pricing**,to flag situations where the “dangerous side” is sinking in isolation.
+    """)
 
-try:
-    danger_data = get_danger_source_data()
-    
-    rel_info   = compute_relative_perf(danger_data)
-    cred_info  = compute_dc_credit_divergence(danger_data)
-    phys_info  = compute_physical_vs_market(metrics_df, market_data)
-    
-    rel_status = judge_relative_perf(rel_info['relative'] if rel_info else None)
-    cred_status = judge_dc_credit(cred_info['spread'] if cred_info else None)
-    phys_status = judge_physical_vs_market(
-        phys_info['min_psr'] if phys_info else None,
-        phys_info['spx_ret'] if phys_info else 0.0
-    )
-    
-    # --- Comprehensive Hazard Status & Matrix ---
-    
-    # Dummy Logic for Demonstration (As requested)
-    # Ideally this comes from aggregating the 3 cards below
-    hazard_status = "HEALTHY"
-    if cred_status == "DANGER" or rel_status == "DANGER":
-         hazard_status = "CRITICAL"
-    elif cred_status == "WATCH" or rel_status == "WATCH":
-         hazard_status = "WARNING"
-         
-    # Dummy Matrix Inputs
-    sens_level = "HIGH" 
-    vel_level = "STABLE"
-    
-    # 1. Hazard Status Panel
-    h_meta = STATUS_MAP[hazard_status]
-    h_msg = HAZARD_MESSAGES[hazard_status]["日本語" if lang=="日本語" else "English"]
-    
-    st.markdown(f"""
-    <div class="judgment-panel {h_meta['class']}" style="margin-bottom:25px;">
-      <div class="judgment-title" style="color:{h_meta['color']}">
-        {h_meta['icon']} {section_title} Status: {hazard_status}
-      </div>
-      <div style="font-size:0.95rem; line-height:1.6;">
-        {h_msg}
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # 2. Sensitivity x Velocity Matrix
-    st.markdown("#### 感度 × 速度 マトリクス" if lang=="日本語" else "Sensitivity × Velocity Matrix")
-
-    mx, my = to_axis_values(sens_level, vel_level)
-    quad = quadrant_label(sens_level, vel_level)
-    qmeta = QUADRANT_MESSAGES[quad]
-    q_label = qmeta["日本語ラベル" if lang=="日本語" else "EnglishLabel"]
-    q_text = qmeta["日本語" if lang=="日本語" else "English"]
-
-    fig_matrix = go.Figure()
-    fig_matrix.add_trace(go.Scatter(
-        x=[mx], y=[my],
-        mode="markers+text",
-        text=[q_label],
-        textposition="top center",
-        marker=dict(size=20, color=h_meta['color'], line=dict(width=2, color='DarkSlateGrey'))
-    ))
-    
-    # Quadrant Lines/Layout
-    fig_matrix.update_layout(
-        xaxis=dict(range=[-1.5,1.5], zeroline=True, tickvals=[-1,1], ticktext=["Low Sens","High Sens"]),
-        yaxis=dict(range=[-1.5,1.5], zeroline=True, tickvals=[-1,0,1], ticktext=["Disconnect","Stable","Accel"]),
-        height=300,
-        margin=dict(l=40,r=40,t=20,b=20),
-        plot_bgcolor='rgba(240,240,240,0.5)'
-    )
-    # Add annotation for axes? Maybe simple is better as per instructions
-    
-    st.plotly_chart(fig_matrix, use_container_width=True)
-    
-    st.markdown(f"""
-    <div style="font-size:0.9rem; background:#f9f9f9; padding:10px; border-radius:5px; margin-bottom:30px; border-left:4px solid #666;">
-        <b>{q_label}</b>: {q_text}
-    </div>
-    """, unsafe_allow_html=True)
-    
-    col_rel, col_cred, col_phys = st.columns(3)
-    
-    # 1) Relative Performance Card
-    val_str_rel = "N/A"
-    if rel_info:
-        val_str_rel = f"Relative 20d: {rel_info['relative']*100:.1f}%"
-    
-    render_metric_card(col_rel, "Semi vs SOXX", val_str_rel, rel_status, RELATIVE_MSG, lang)
-    
-    
-    # 2) DC Credit Card
-    val_str_cred = "N/A"
-    if cred_info:
-        val_str_cred = f"Price Spread 60d: {cred_info['spread']*100:.1f}%"
-    
-    render_metric_card(col_cred, "DC Credit vs HY", val_str_cred, cred_status, DC_CREDIT_MSG, lang)
-
-    
-    # 3) Physical vs Market Card
-    val_str_phys = "N/A"
-    if phys_info:
-        val_str_phys = f"Min PSR: {phys_info['min_psr']:.2f} / SPX 1m: {phys_info['spx_ret']*100:.1f}%"
+    try:
+        danger_data = get_danger_source_data()
         
-    render_metric_card(col_phys, "Physical vs Market", val_str_phys, phys_status, PHYSICAL_MARKET_MSG, lang)
+        rel_info   = compute_relative_perf(danger_data)
+        cred_info  = compute_dc_credit_divergence(danger_data)
+        phys_info  = compute_physical_vs_market(metrics_df, market_data)
+        
+        rel_status = judge_relative_perf(rel_info['relative'] if rel_info else None)
+        cred_status = judge_dc_credit(cred_info['spread'] if cred_info else None)
+        phys_status = judge_physical_vs_market(
+            phys_info['min_psr'] if phys_info else None,
+            phys_info['spx_ret'] if phys_info else 0.0
+        )
+        
+        # --- Comprehensive Hazard Status & Matrix ---
+        
+        # Dummy Logic for Demonstration (As requested)
+        # Ideally this comes from aggregating the 3 cards below
+        hazard_status = "HEALTHY"
+        if cred_status == "DANGER" or rel_status == "DANGER":
+             hazard_status = "CRITICAL"
+        elif cred_status == "WATCH" or rel_status == "WATCH":
+             hazard_status = "WARNING"
+             
+        # Dummy Matrix Inputs
+        sens_level = "HIGH" 
+        vel_level = "STABLE"
+        
+        # 1. Hazard Status Panel
+        h_meta = STATUS_MAP[hazard_status]
+        h_msg = HAZARD_MESSAGES[hazard_status]["日本語" if lang=="日本語" else "English"]
+        
+        st.markdown(f"""
+        <div class="judgment-panel {h_meta['class']}" style="margin-bottom:25px;">
+          <div class="judgment-title" style="color:{h_meta['color']}">
+            {h_meta['icon']} {section_title} Status: {hazard_status}
+          </div>
+          <div style="font-size:0.95rem; line-height:1.6;">
+            {h_msg}
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-except Exception as e:
-    st.error(f"Error in Danger Source Monitor: {e}")
+        # 2. Sensitivity x Velocity Matrix
+        st.markdown("#### 感度 × 速度 マトリクス" if lang=="日本語" else "Sensitivity × Velocity Matrix")
+
+        mx, my = to_axis_values(sens_level, vel_level)
+        quad = quadrant_label(sens_level, vel_level)
+        qmeta = QUADRANT_MESSAGES[quad]
+        q_label = qmeta["日本語ラベル" if lang=="日本語" else "EnglishLabel"]
+        q_text = qmeta["日本語" if lang=="日本語" else "English"]
+
+        fig_matrix = go.Figure()
+        fig_matrix.add_trace(go.Scatter(
+            x=[mx], y=[my],
+            mode="markers+text",
+            text=[q_label],
+            textposition="top center",
+            marker=dict(size=20, color=h_meta['color'], line=dict(width=2, color='DarkSlateGrey'))
+        ))
+        
+        # Quadrant Lines/Layout
+        fig_matrix.update_layout(
+            xaxis=dict(range=[-1.5,1.5], zeroline=True, tickvals=[-1,1], ticktext=["Low Sens","High Sens"]),
+            yaxis=dict(range=[-1.5,1.5], zeroline=True, tickvals=[-1,0,1], ticktext=["Disconnect","Stable","Accel"]),
+            height=300,
+            margin=dict(l=40,r=40,t=20,b=20),
+            plot_bgcolor='rgba(240,240,240,0.5)'
+        )
+        # Add annotation for axes? Maybe simple is better as per instructions
+        
+        st.plotly_chart(fig_matrix, use_container_width=True)
+        
+        st.markdown(f"""
+        <div style="font-size:0.9rem; background:#f9f9f9; padding:10px; border-radius:5px; margin-bottom:30px; border-left:4px solid #666;">
+            <b>{q_label}</b>: {q_text}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col_rel, col_cred, col_phys = st.columns(3)
+        
+        # 1) Relative Performance Card
+        val_str_rel = "N/A"
+        if rel_info:
+            val_str_rel = f"Relative 20d: {rel_info['relative']*100:.1f}%"
+        
+        render_metric_card(col_rel, "Semi vs SOXX", val_str_rel, rel_status, RELATIVE_MSG, lang)
+        
+        
+        # 2) DC Credit Card
+        val_str_cred = "N/A"
+        if cred_info:
+            val_str_cred = f"Price Spread 60d: {cred_info['spread']*100:.1f}%"
+        
+        render_metric_card(col_cred, "DC Credit vs HY", val_str_cred, cred_status, DC_CREDIT_MSG, lang)
+
+        
+        # 3) Physical vs Market Card
+        val_str_phys = "N/A"
+        if phys_info:
+            val_str_phys = f"Min PSR: {phys_info['min_psr']:.2f} / SPX 1m: {phys_info['spx_ret']*100:.1f}%"
+            
+        render_metric_card(col_phys, "Physical vs Market", val_str_phys, phys_status, PHYSICAL_MARKET_MSG, lang)
+
+    except Exception as e:
+        st.error(f"Error in Danger Source Monitor: {e}")
 
 
 
 # --- Semiconductor Survivor Map (Live Status) ---
 
-st.divider()
-survivor_title = "Semiconductor Survivor Map" if lang == "English" else "半導体 Survivor マップ"
-st.subheader(survivor_title)
+with tabs[4]:
+    survivor_title = "Semiconductor Survivor Map" if lang == "English" else "半導体 Survivor マップ"
+    st.subheader(survivor_title)
 
-# --- Survivor Logic ---
+    # --- Survivor Logic ---
 
-def classify_struct_rank(psr: float) -> str:
-    if pd.isna(psr): return "BROKEN"
-    if psr >= 1.3: return "STRONG"
-    elif psr >= 1.1: return "MID"
-    elif psr >= 1.0: return "WEAK"
-    else: return "BROKEN"
+    def classify_struct_rank(psr: float) -> str:
+        if pd.isna(psr): return "BROKEN"
+        if psr >= 1.3: return "STRONG"
+        elif psr >= 1.1: return "MID"
+        elif psr >= 1.0: return "WEAK"
+        else: return "BROKEN"
 
-def classify_market_rank(rel20: float, rel60: float) -> str:
-    if pd.isna(rel20) or pd.isna(rel60): return "DUMPED"
-    if rel20 >= -0.02 and rel60 >= -0.05: return "FAVORED"
-    elif rel20 >= -0.08 and rel60 >= -0.15: return "NEUTRAL"
-    else: return "DUMPED"
+    def classify_market_rank(rel20: float, rel60: float) -> str:
+        if pd.isna(rel20) or pd.isna(rel60): return "DUMPED"
+        if rel20 >= -0.02 and rel60 >= -0.05: return "FAVORED"
+        elif rel20 >= -0.08 and rel60 >= -0.15: return "NEUTRAL"
+        else: return "DUMPED"
 
-def classify_final_class(struct_rank: str, market_rank: str,
-                         psr: float, rel20: float, rel60: float) -> str:
-    """
-    Anti-Reverse Logic for Final Class
-    """
-    # Base
-    base_survivor = (struct_rank in ["STRONG", "MID"] and market_rank in ["FAVORED", "NEUTRAL"])
-    base_hazard   = (struct_rank in ["WEAK", "BROKEN"] and market_rank == "DUMPED")
+    def classify_final_class(struct_rank: str, market_rank: str,
+                             psr: float, rel20: float, rel60: float) -> str:
+        """
+        Anti-Reverse Logic for Final Class
+        """
+        # Base
+        base_survivor = (struct_rank in ["STRONG", "MID"] and market_rank in ["FAVORED", "NEUTRAL"])
+        base_hazard   = (struct_rank in ["WEAK", "BROKEN"] and market_rank == "DUMPED")
 
-    # Anti-Reverse: Require Margin for Promotion
-    if base_survivor:
-        # Strict condition for promotion
-        if (psr >= 1.35) and (rel60 >= -0.02) and (rel20 >= -0.01):
-            return "Survivor"
-        else:
-            return "Watch"
+        # Anti-Reverse: Require Margin for Promotion
+        if base_survivor:
+            # Strict condition for promotion
+            if (psr >= 1.35) and (rel60 >= -0.02) and (rel20 >= -0.01):
+                return "Survivor"
+            else:
+                return "Watch"
 
-    if base_hazard:
-        return "Hazard"
+        if base_hazard:
+            return "Hazard"
 
-    # Default Middle
-    return "Watch"
+        # Default Middle
+        return "Watch"
 
-@st.cache_data(ttl=3600)
-def get_semi_relative_returns(universe, days=180):
-    # Fetch Universe + Benchmark
-    px = fetch_price_series(universe + ["SOXX"], days=days)
-    if px.empty:
-        return {}
-    
-    # Common Dates
-    px = px.dropna(how="any")
-
-    results = {}
-    
-    def period_ret(series, window):
-        if len(series) < window: return 0.0
-        return float(series.iloc[-1] / series.iloc[-window] - 1.0)
-    
-    if "SOXX" not in px.columns:
-        return {}
-
-    soxx = px["SOXX"]
-    r20x = period_ret(soxx, 20)
-    r60x = period_ret(soxx, 60)
-
-    for ticker in universe:
-        if ticker not in px.columns:
-            continue
-        s = px[ticker]
-        r20 = period_ret(s, 20)
-        r60 = period_ret(s, 60)
+    @st.cache_data(ttl=3600)
+    def get_semi_relative_returns(universe, days=180):
+        # Fetch Universe + Benchmark
+        px = fetch_price_series(universe + ["SOXX"], days=days)
+        if px.empty:
+            return {}
         
-        results[ticker] = {
-            "R20": r20,
-            "R60": r60,
-            "R20_SOXX": r20x,
-            "R60_SOXX": r60x,
-            "rel20": r20 - r20x,
-            "rel60": r60 - r60x
-        }
-    return results
+        # Common Dates
+        px = px.dropna(how="any")
 
-def build_semi_class_table(df_input, lang: str):
-    # df_input should be survivor_df
-    if df_input.empty:
-        return pd.DataFrame()
-    
-    univ = df_input["Ticker"].tolist()
-    rel_map = get_semi_relative_returns(univ, days=180)
-
-    records = []
-    for _, row in df_input.iterrows():
-        ticker = row["Ticker"]
-        psr = row.get("PSR", np.nan)
+        results = {}
         
-        rel = rel_map.get(ticker, {})
-        rel20 = rel.get("rel20", np.nan)
-        rel60 = rel.get("rel60", np.nan)
-
-        if np.isnan(psr) or np.isnan(rel20) or np.isnan(rel60):
-            final_class = "Unknown"
-            struct_rank = None
-            market_rank = None
-        else:
-            struct_rank = classify_struct_rank(psr)
-            market_rank = classify_market_rank(rel20, rel60)
-            final_class = classify_final_class(struct_rank, market_rank, psr, rel20, rel60)
+        def period_ret(series, window):
+            if len(series) < window: return 0.0
+            return float(series.iloc[-1] / series.iloc[-window] - 1.0)
         
-        records.append({
-            "Ticker": ticker,
-            "PSR": psr,
-            "rel20": rel20,
-            "rel60": rel60,
-            "StructRank": struct_rank,
-            "MarketRank": market_rank,
-            "Class": final_class
-        })
-    return pd.DataFrame(records)
+        if "SOXX" not in px.columns:
+            return {}
 
-# --- UI Visualization ---
+        soxx = px["SOXX"]
+        r20x = period_ret(soxx, 20)
+        r60x = period_ret(soxx, 60)
 
-if lang == "日本語":
-    st.markdown("""
-    AIサイクルのなかで<b>「どの装置銘柄が物理的に生き残りやすいか」</b>、<b>「どの銘柄が構造的な危険源になりつつあるか」</b>を可視化します。<br>
-    横軸はPSRによる<b>物理的耐久度</b>、縦軸はSOXXに対する<b>相対パフォーマンス</b>です。
-    """, unsafe_allow_html=True)
-else:
-    st.markdown("""
-    This map visualizes <b>which equipment names are physically positioned to survive the AI cycle versus which are becoming structural hazards</b>.<br>
-    The X-axis represents <b>Physical Durability (PSR)</b>, and the Y-axis shows <b>Relative Performance vs SOXX</b>.
-    """, unsafe_allow_html=True)
+        for ticker in universe:
+            if ticker not in px.columns:
+                continue
+            s = px[ticker]
+            r20 = period_ret(s, 20)
+            r60 = period_ret(s, 60)
+            
+            results[ticker] = {
+                "R20": r20,
+                "R60": r60,
+                "R20_SOXX": r20x,
+                "R60_SOXX": r60x,
+                "rel20": r20 - r20x,
+                "rel60": r60 - r60x
+            }
+        return results
 
-# Compute Data
-semi_table = build_semi_class_table(survivor_df, lang)
+    def build_semi_class_table(df_input, lang: str):
+        # df_input should be survivor_df
+        if df_input.empty:
+            return pd.DataFrame()
+        
+        univ = df_input["Ticker"].tolist()
+        rel_map = get_semi_relative_returns(univ, days=180)
 
-if semi_table.empty:
-    st.warning("No data available for Survivor Universe.")
-else:
-    # 1. Summary Counts
-    cnt_surv = (semi_table["Class"] == "Survivor").sum()
-    cnt_haz  = (semi_table["Class"] == "Hazard").sum()
-    cnt_watch = (semi_table["Class"] == "Watch").sum()
-    cnt_unknown = (semi_table["Class"] == "Unknown").sum()
-    
+        records = []
+        for _, row in df_input.iterrows():
+            ticker = row["Ticker"]
+            psr = row.get("PSR", np.nan)
+            
+            rel = rel_map.get(ticker, {})
+            rel20 = rel.get("rel20", np.nan)
+            rel60 = rel.get("rel60", np.nan)
+
+            if np.isnan(psr) or np.isnan(rel20) or np.isnan(rel60):
+                final_class = "Unknown"
+                struct_rank = None
+                market_rank = None
+            else:
+                struct_rank = classify_struct_rank(psr)
+                market_rank = classify_market_rank(rel20, rel60)
+                final_class = classify_final_class(struct_rank, market_rank, psr, rel20, rel60)
+            
+            records.append({
+                "Ticker": ticker,
+                "PSR": psr,
+                "rel20": rel20,
+                "rel60": rel60,
+                "StructRank": struct_rank,
+                "MarketRank": market_rank,
+                "Class": final_class
+            })
+        return pd.DataFrame(records)
+
+    # --- UI Visualization ---
+
     if lang == "日本語":
-        unit = "銘柄"
-        lbl_s, lbl_h, lbl_w, lbl_u = "Survivor", "Hazard", "Watch", "Unknown"
+        st.markdown("""
+        AIサイクルのなかで<b>「どの装置銘柄が物理的に生き残りやすいか」</b>、<b>「どの銘柄が構造的な危険源になりつつあるか」</b>を可視化します。<br>
+        横軸はPSRによる<b>物理的耐久度</b>、縦軸はSOXXに対する<b>相対パフォーマンス</b>です。
+        """, unsafe_allow_html=True)
     else:
-        unit = "Stocks"
-        lbl_s, lbl_h, lbl_w, lbl_u = "Survivor", "Hazard", "Watch", "Unknown"
+        st.markdown("""
+        This map visualizes <b>which equipment names are physically positioned to survive the AI cycle versus which are becoming structural hazards</b>.<br>
+        The X-axis represents <b>Physical Durability (PSR)</b>, and the Y-axis shows <b>Relative Performance vs SOXX</b>.
+        """, unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns(4)
-    # Cards
-    for c, label, count, color in [
-        (c1, f"{lbl_s}: {cnt_surv}", cnt_surv, "#007bff"),
-        (c2, f"{lbl_h}: {cnt_haz}", cnt_haz, "#dc3545"),
-        (c3, f"{lbl_w}: {cnt_watch}", cnt_watch, "#ffc107"),
-        (c4, f"{lbl_u}: {cnt_unknown}", cnt_unknown, "#6c757d"),
-    ]:
-        with c:
-            st.markdown(f"""
-            <div class="metric-card" style="border-top:4px solid {color}; text-align:center; padding:15px;">
-              <div style="font-weight:bold; font-size:1rem; color:{color};">{label}</div>
-            </div>
-            """, unsafe_allow_html=True)
+    # Compute Data
+    semi_table = build_semi_class_table(survivor_df, lang)
 
-    # 2. Scatter Plot
-    df_plot = semi_table.copy()
-    # Clamp PSR for plotting
-    if "PSR" in df_plot.columns:
-        df_plot["PSR_clamped"] = df_plot["PSR"].clip(0, 2.5) # View range
+    if semi_table.empty:
+        st.warning("No data available for Survivor Universe.")
+    else:
+        # 1. Summary Counts
+        cnt_surv = (semi_table["Class"] == "Survivor").sum()
+        cnt_haz  = (semi_table["Class"] == "Hazard").sum()
+        cnt_watch = (semi_table["Class"] == "Watch").sum()
+        cnt_unknown = (semi_table["Class"] == "Unknown").sum()
         
-        fig = go.Figure()
-        
-        color_map = {
-            "Survivor": "#007bff", # Blue
-            "Hazard": "#dc3545",   # Red
-            "Watch": "#ffc107",    # Yellow
-            "Unknown": "#6c757d"   # Gray
-        }
-        
-        for cls in ["Survivor", "Hazard", "Watch", "Unknown"]:
-            sub = df_plot[df_plot["Class"] == cls]
-            if sub.empty: continue
+        if lang == "日本語":
+            unit = "銘柄"
+            lbl_s, lbl_h, lbl_w, lbl_u = "Survivor", "Hazard", "Watch", "Unknown"
+        else:
+            unit = "Stocks"
+            lbl_s, lbl_h, lbl_w, lbl_u = "Survivor", "Hazard", "Watch", "Unknown"
+
+        c1, c2, c3, c4 = st.columns(4)
+        # Cards
+        for c, label, count, color in [
+            (c1, f"{lbl_s}: {cnt_surv}", cnt_surv, "#007bff"),
+            (c2, f"{lbl_h}: {cnt_haz}", cnt_haz, "#dc3545"),
+            (c3, f"{lbl_w}: {cnt_watch}", cnt_watch, "#ffc107"),
+            (c4, f"{lbl_u}: {cnt_unknown}", cnt_unknown, "#6c757d"),
+        ]:
+            with c:
+                st.markdown(f"""
+                <div class="metric-card" style="border-top:4px solid {color}; text-align:center; padding:15px;">
+                  <div style="font-weight:bold; font-size:1rem; color:{color};">{label}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        # 2. Scatter Plot
+        df_plot = semi_table.copy()
+        # Clamp PSR for plotting
+        if "PSR" in df_plot.columns:
+            df_plot["PSR_clamped"] = df_plot["PSR"].clip(0, 2.5) # View range
             
-            fig.add_trace(go.Scatter(
-                x=sub["PSR_clamped"],
-                y=sub["rel20"] * 100,
-                mode="markers+text",
-                text=sub["Ticker"],
-                textposition="top center",
-                marker=dict(size=14, color=color_map[cls], line=dict(width=1, color="#333"), opacity=0.9),
-                name=cls
-            ))
+            fig = go.Figure()
             
-        fig.add_vline(x=1.0, line_dash="dash", line_color="red", opacity=0.5, annotation_text="PSR=1.0")
-        fig.add_vline(x=1.3, line_dash="dash", line_color="green", opacity=0.5, annotation_text="PSR=1.3")
-        fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+            color_map = {
+                "Survivor": "#007bff", # Blue
+                "Hazard": "#dc3545",   # Red
+                "Watch": "#ffc107",    # Yellow
+                "Unknown": "#6c757d"   # Gray
+            }
+            
+            for cls in ["Survivor", "Hazard", "Watch", "Unknown"]:
+                sub = df_plot[df_plot["Class"] == cls]
+                if sub.empty: continue
+                
+                fig.add_trace(go.Scatter(
+                    x=sub["PSR_clamped"],
+                    y=sub["rel20"] * 100,
+                    mode="markers+text",
+                    text=sub["Ticker"],
+                    textposition="top center",
+                    marker=dict(size=14, color=color_map[cls], line=dict(width=1, color="#333"), opacity=0.9),
+                    name=cls
+                ))
+                
+            fig.add_vline(x=1.0, line_dash="dash", line_color="red", opacity=0.5, annotation_text="PSR=1.0")
+            fig.add_vline(x=1.3, line_dash="dash", line_color="green", opacity=0.5, annotation_text="PSR=1.3")
+            fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
 
-        fig.update_layout(
-            height=400,
-            margin=dict(l=40, r=40, t=30, b=40),
-            xaxis_title="Physical Durability (PSR)",
-            yaxis_title="20d Relative vs SOXX (%)",
-            plot_bgcolor="rgba(248,248,248,0.8)",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(
+                height=400,
+                margin=dict(l=40, r=40, t=30, b=40),
+                xaxis_title="Physical Durability (PSR)",
+                yaxis_title="20d Relative vs SOXX (%)",
+                plot_bgcolor="rgba(248,248,248,0.8)",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-    # 3. Detail Cards
-    st.markdown("##### Detailed Status")
-    d_cols = st.columns(len(semi_table))
-    for i, row in semi_table.iterrows():
-        # Iterate safely
-        col = d_cols[i % 5] # wrap if many
-        
-        cls = row["Class"]
-        color = color_map.get(cls, "#6c757d")
-        ticker = row["Ticker"]
-        psr = row.get("PSR", 0)
-        r20 = row.get("rel20", 0) * 100
-        r60 = row.get("rel60", 0) * 100
-        
-        with col:
-            st.markdown(f"""
-            <div class="metric-card" style="border-left:4px solid {color}; padding:15px;">
-              <div style="font-weight:700; margin-bottom:5px; font-size:1.1rem;">{ticker}</div>
-              <div style="font-size:0.8rem; color:#444; margin-bottom:2px;"><b>{cls}</b></div>
-              <div style="font-size:0.75rem; color:#666;">
-                PSR: {psr:.2f}<br>
-                20d Rel: {r20:+.1f}%<br>
-                60d Rel: {r60:+.1f}%
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+        # 3. Detail Cards
+        st.markdown("##### Detailed Status")
+        d_cols = st.columns(len(semi_table))
+        for i, row in semi_table.iterrows():
+            # Iterate safely
+            col = d_cols[i % 5] # wrap if many
+            
+            cls = row["Class"]
+            color = color_map.get(cls, "#6c757d")
+            ticker = row["Ticker"]
+            psr = row.get("PSR", 0)
+            r20 = row.get("rel20", 0) * 100
+            r60 = row.get("rel60", 0) * 100
+            
+            with col:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left:4px solid {color}; padding:15px;">
+                  <div style="font-weight:700; margin-bottom:5px; font-size:1.1rem;">{ticker}</div>
+                  <div style="font-size:0.8rem; color:#444; margin-bottom:2px;"><b>{cls}</b></div>
+                  <div style="font-size:0.75rem; color:#666;">
+                    PSR: {psr:.2f}<br>
+                    20d Rel: {r20:+.1f}%<br>
+                    60d Rel: {r60:+.1f}%
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
 
 
